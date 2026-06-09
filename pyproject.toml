@@ -1,0 +1,39 @@
+[project]
+name = "distributed-pipeline-parallelism-pytorch"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "aiohttp>=3.14.1",
+    "fastapi>=0.136.3",
+    "numpy>=2.4.6",
+    "torch>=2.12.0",
+    "uvicorn>=0.49.0",
+]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["src"]
+
+[tool.uv.workspace]
+members = [
+    "example-cnn",
+]
+
+[tool.poe]
+executor.type = "uv"
+
+[tool.poe.tasks]
+sync = "uv sync --all-packages --all-groups"
+build = "uv build"
+
+[dependency-groups]
+dev = [
+    "poethepoet>=0.46.0",
+]
+
+
