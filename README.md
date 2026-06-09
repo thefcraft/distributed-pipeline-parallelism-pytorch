@@ -4,6 +4,10 @@ A lightweight, HTTP-based pipeline parallel training framework designed to split
 
 This toy project demonstrates the core concepts of **pipeline parallelism**, **activation (gradient) checkpointing**, and **asynchronous execution** using PyTorch, FastAPI, and standard HTTP protocols.
 
+### ⚠️ Note
+
+The Readme was AI-generated. (cause i hate writing by my own...)
+
 ---
 
 ## 📖 How It Works
