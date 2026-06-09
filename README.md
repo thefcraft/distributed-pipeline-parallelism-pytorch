@@ -194,7 +194,32 @@ if __name__ == "__main__":
 
 ---
 
-## ⚠️ Notes & Limitations
+## ⚠️ Notes, Limitations & Known Issues
 
 - **HTTP Overhead**: This is a **toy project** designed for simplicity, ease of debugging, and cross-platform flexibility over heterogeneous networks. Standard HTTP protocol overhead makes it slower than dedicated high-performance frameworks (e.g., PyTorch RPC, NCCL/MPI-backed Pipeline Parallelism).
 - **Network Serialization**: PyTorch Tensors are converted to CPU NumPy arrays and serialized to raw bytes for transport. Ensure your local networks have high bandwidth if passing large activation shapes.
+
+### 🐛 Known Issues & Potential Bugs
+
+1. **RNG State Mismatch on Multi-GPU Nodes**:
+   - *The Issue*: `torch.cuda.get_rng_state()` defaults to the active device index (usually `cuda:0`). If you run workers on different GPUs (e.g. `cuda:0` and `cuda:1`) in a multi-GPU system without isolating visible devices, the wrong GPU's RNG state is captured and restored.
+   - *The Impact*: Mismatched dropout/randomness masks between the forward pass and the recomputed forward pass in backpropagation.
+   - *Future Fix*: Pass the target device explicitly to RNG functions if `self.device.type == "cuda"`:
+     ```python
+     cuda_rng = torch.cuda.get_rng_state(self.device)
+     ```
+
+2. **Eager CUDA Initialization on CPU Workers**:
+   - *The Issue*: Checking `torch.cuda.is_available()` and calling `torch.cuda.get_rng_state()` on a machine with CUDA drivers will eagerly initialize CUDA even if the worker is explicitly configured to run on CPU.
+   - *The Impact*: Crashes in environments with broken or restricted CUDA runtimes.
+   - *Future Fix*: Guard all CUDA-related RNG logic with `self.device.type == "cuda"`.
+
+3. **Weight Mismatch during Pipelined Recomputation (In-flight Batches > 1)**:
+   - *The Issue*: Currently, `self.optimizer.step()` is called immediately inside the worker's `backward()` pass. When running multiple batches in-flight concurrently (e.g. `MAX_BATCH_QUEUE > 1`):
+     - **Batch 1** forward runs on Stage 1 using weights $W^{(0)}$.
+     - **Batch 2** forward runs on Stage 1 using weights $W^{(0)}$ (since Batch 1 hasn't backpropagated yet).
+     - **Batch 1** backward runs, recomputing forward on Stage 1 using $W^{(0)}$, and updates weights to $W^{(1)}$.
+     - **Batch 2** backward runs, recomputing forward on Stage 1 using the updated weights $W^{(1)}$!
+   - *The Impact*: Mismatch between original forward activations and backward recomputed activations for Batch 2, leading to incorrect gradients.
+   - *Future Fix*: Decouple weight updates and gradient clearing from the `backward()` pass. Expose `/step` and `/zero-grad` HTTP endpoints on the workers to let the coordinator trigger parameter updates at the end of a full step (after all micro-batches have completed their backward passes).
+
