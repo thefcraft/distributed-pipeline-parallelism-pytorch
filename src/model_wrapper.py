@@ -24,8 +24,9 @@ class ModelWrapper:
         self.model = model
         self.optimizer = optimizer
         self.device = device
-        self.cuda_avaliable = torch.cuda.is_available()
+        self.is_cuda = (self.device.type == "cuda")
         self.batch_store: dict[UUID, BatchState] = {}
+        self.optimizer.zero_grad()
 
     def forward(
         self, header: ForwardHeader, data: bytes
@@ -39,7 +40,7 @@ class ModelWrapper:
             self.batch_store[header.batch_key] = BatchState(
                 input=arr,
                 cpu_rng=torch.get_rng_state(),
-                cuda_rng=torch.cuda.get_rng_state() if self.cuda_avaliable else None,
+                cuda_rng=torch.cuda.get_rng_state(self.device) if self.is_cuda else None,
             )  # NOTE: for gradient checkpointing
         tensor = torch.from_numpy(arr).to(device=self.device) # type: ignore
         with torch.no_grad():
@@ -60,7 +61,6 @@ class ModelWrapper:
         state = self.batch_store.pop(header.batch_key)
         tensor = state.input
 
-        self.optimizer.zero_grad()
         grad_data = bytearray(grad_data)
         dtype = np.dtype(header.dtype)
         arr = np.frombuffer(grad_data, dtype=dtype)
@@ -70,27 +70,29 @@ class ModelWrapper:
         tensor = torch.from_numpy(tensor).to(device=self.device) # type: ignore
         tensor.requires_grad_()
 
-
         # NOTE: save current RNG state before we tamper with it
         current_cpu_rng = torch.get_rng_state()
-        current_cuda_rng = torch.cuda.get_rng_state() if self.cuda_avaliable else None
+        current_cuda_rng = torch.cuda.get_rng_state(self.device) if self.is_cuda else None
 
         # NOTE: restore to forward-time state for recomputation
         torch.set_rng_state(state.cpu_rng)
         if state.cuda_rng is not None:
-            torch.cuda.set_rng_state(state.cuda_rng)
+            torch.cuda.set_rng_state(state.cuda_rng, self.device)
 
         result: torch.Tensor = self.model(tensor)
 
         # NOTE: restore RNG back to where it was before this backward call
         torch.set_rng_state(current_cpu_rng)
         if current_cuda_rng is not None:
-            torch.cuda.set_rng_state(current_cuda_rng)
+            torch.cuda.set_rng_state(current_cuda_rng, self.device)
 
         result.backward(grad) # type: ignore
-        self.optimizer.step()
 
-        result_grad = tensor.grad.detach().cpu().numpy()  # pyright: ignore[reportOptionalMemberAccess]
+        if tensor.grad is None:
+            result_grad = np.zeros(tensor.shape, dtype=dtype)
+        else:
+            result_grad = tensor.grad.detach().cpu().numpy()
+
         return BaseHeader(
             batch_key=header.batch_key,
             shape=result_grad.shape,
@@ -101,7 +103,6 @@ class ModelWrapper:
         state = self.batch_store.pop(header.batch_key)
         tensor = state.input
 
-        self.optimizer.zero_grad()
         grad_data = bytearray(grad_data)
         dtype = np.dtype(header.dtype)
         arr = np.frombuffer(grad_data, dtype=dtype)
@@ -112,21 +113,23 @@ class ModelWrapper:
         
         # NOTE: save current RNG state before we tamper with it
         current_cpu_rng = torch.get_rng_state()
-        current_cuda_rng = torch.cuda.get_rng_state() if self.cuda_avaliable else None
+        current_cuda_rng = torch.cuda.get_rng_state(self.device) if self.is_cuda else None
 
         # NOTE: restore to forward-time state for recomputation
         torch.set_rng_state(state.cpu_rng)
         if state.cuda_rng is not None:
-            torch.cuda.set_rng_state(state.cuda_rng)
+            torch.cuda.set_rng_state(state.cuda_rng, self.device)
 
         result: torch.Tensor = self.model(tensor)
 
         # NOTE: restore RNG back to where it was before this backward call
         torch.set_rng_state(current_cpu_rng)
         if current_cuda_rng is not None:
-            torch.cuda.set_rng_state(current_cuda_rng)
-
+            torch.cuda.set_rng_state(current_cuda_rng, self.device)
 
         result.backward(grad) # type: ignore
-        self.optimizer.step()
         return None
+
+    def step(self) -> None:
+        self.optimizer.step()
+        self.optimizer.zero_grad() # NOTE: accumulating gradient

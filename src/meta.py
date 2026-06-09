@@ -112,9 +112,7 @@ class Meta:
         app.include_router(router)
 
         async with aiohttp.ClientSession() as session:
-            for server_url, config in zip(
-                self.servers, self.server_configs, strict=True
-            ):
+            async def _init_server(server_url: HttpUrl, config: ServerConfig) -> None:
                 async with session.post(
                     urljoin(str(server_url), "config"),
                     json=config.model_dump(mode="json"),
@@ -127,6 +125,11 @@ class Meta:
                 ) as resp:
                     resp.raise_for_status()
                     await resp.read()
+
+            await asyncio.gather(*[
+                _init_server(srv, cfg)
+                for srv, cfg in zip(self.servers, self.server_configs, strict=True)
+            ])
 
             config = uvicorn.Config(
                 app,
@@ -204,3 +207,10 @@ class Meta:
             resp.raise_for_status()
             resp = SuccessJobResponse.model_validate(await resp.json())
             assert resp.batch_key == batch_key
+
+    async def step(self) -> None:
+        async def _step_server(server_url: HttpUrl) -> None:
+            async with self.session.post(urljoin(str(server_url), "step")) as resp:
+                resp.raise_for_status()
+                await resp.read()
+        await asyncio.gather(*[_step_server(srv) for srv in self.servers])

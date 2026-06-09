@@ -60,17 +60,7 @@ async def main_train_point(
     return loss.detach().cpu().item()
 
 
-async def train_worker(
-    meta: Meta,
-    semaphore: asyncio.Semaphore,
-    x: torch.Tensor,
-    y: torch.Tensor,
-) -> float:
-    async with semaphore:
-        return await main_train_point(meta, x, y)
-
-
-async def train_loop(meta: Meta, pbar: tqdm, semaphore: asyncio.Semaphore):  # type: ignore
+async def train_loop(meta: Meta, pbar: tqdm) -> float: # type: ignore
     tasks: list[asyncio.Task[float]] = []
 
     running_loss = 0.0
@@ -78,9 +68,8 @@ async def train_loop(meta: Meta, pbar: tqdm, semaphore: asyncio.Semaphore):  # t
 
     for x, y in pbar:  # type: ignore
         task = asyncio.create_task(
-            train_worker(
+            main_train_point(
                 meta=meta,
-                semaphore=semaphore,
                 x=x,  # type: ignore
                 y=y,  # type: ignore
             )
@@ -88,28 +77,25 @@ async def train_loop(meta: Meta, pbar: tqdm, semaphore: asyncio.Semaphore):  # t
         tasks.append(task)
 
         if len(tasks) >= MAX_BATCH_QUEUE:
-            done, pending = await asyncio.wait(
-                tasks,
-                return_when=asyncio.FIRST_COMPLETED,
-            )
+            results = await asyncio.gather(*tasks)
+            await meta.step()
 
-            for t in done:
-                loss = await t
+            for loss in results:
                 running_loss += loss
                 completed += 1
 
-            tasks = list(pending)
-
+            tasks = []
             pbar.set_postfix(loss=f"{running_loss / completed:.4f}")  # type: ignore
+
     if tasks:
         results = await asyncio.gather(*tasks)
+        await meta.step()
 
         for loss in results:
             running_loss += loss
             completed += 1
 
     epoch_loss = running_loss / completed
-
     return epoch_loss
 
 
@@ -151,13 +137,12 @@ async def main() -> None:
         port=8000,
     )
     async with meta.start():
-        semaphore = asyncio.Semaphore(value=MAX_BATCH_QUEUE)
         for epoch in range(EPOCHS):
             pbar = tqdm(
                 train_loader,
                 desc=f"Training [{epoch + 1}/{EPOCHS}]",
             )
-            epoch_loss = await train_loop(meta=meta, semaphore=semaphore, pbar=pbar)
+            epoch_loss = await train_loop(meta=meta, pbar=pbar)
             test_loss, test_acc = await evaluate_loop(meta)
 
             print(

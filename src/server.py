@@ -160,6 +160,12 @@ async def lifespan(app: FastAPI, *, model_wrapper: ModelWrapper):
             del app.state.model_wrapper
 
 
+@router.post("/step", status_code=status.HTTP_204_NO_CONTENT)
+async def step(request: Request) -> None:
+    async with request.app.state.model_wrapper.lock() as model_wrapper:
+        await asyncio.to_thread(model_wrapper.step)
+
+
 def create_app(model_wrapper: ModelWrapper) -> FastAPI:
     app = FastAPI(lifespan=partial(lifespan, model_wrapper=model_wrapper))
     app.include_router(router)

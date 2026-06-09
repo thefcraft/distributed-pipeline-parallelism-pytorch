@@ -214,7 +214,7 @@ if __name__ == "__main__":
    - *The Impact*: Crashes in environments with broken or restricted CUDA runtimes.
    - *Future Fix*: Guard all CUDA-related RNG logic with `self.device.type == "cuda"`.
 
-3. **Weight Mismatch during Pipelined Recomputation (In-flight Batches > 1)**:
+3. **Fixed: Weight Mismatch during Pipelined Recomputation (In-flight Batches > 1)**:
    - *The Issue*: Currently, `self.optimizer.step()` is called immediately inside the worker's `backward()` pass. When running multiple batches in-flight concurrently (e.g. `MAX_BATCH_QUEUE > 1`):
      - **Batch 1** forward runs on Stage 1 using weights $W^{(0)}$.
      - **Batch 2** forward runs on Stage 1 using weights $W^{(0)}$ (since Batch 1 hasn't backpropagated yet).
