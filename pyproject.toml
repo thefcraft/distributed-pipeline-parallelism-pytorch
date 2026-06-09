@@ -1,7 +1,7 @@
 [project]
 name = "distributed-pipeline-parallelism-pytorch"
 version = "0.1.0"
-description = "Add your description here"
+description = "A lightweight, HTTP-based pipeline parallel training toy framework designed to split and train large PyTorch models across multiple heterogeneous devices or machines easily."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
